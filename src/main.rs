@@ -45,6 +45,10 @@ enum Commands {
         /// Skip creating a backup of the previous note content
         #[arg(long)]
         no_backup: bool,
+
+        /// Keep the bw_id header in Bitwarden notes instead of stripping it
+        #[arg(long)]
+        keep_header: bool,
     },
 }
 
@@ -57,38 +61,62 @@ struct BwStatus {
     status: String,
 }
 
-/// Extract Bitwarden item UUID from the first few lines of content or chezmoi template syntax.
-fn extract_item_id(content: &str) -> Option<String> {
-    // Check first 15 lines
-    let header_lines: Vec<&str> = content.lines().take(15).collect();
-    let header_text = header_lines.join("\n");
-
-    // Match comments like `# bw_id: <uuid>`, `// bw_id: <uuid>`, `-- bw_id: <uuid>`, etc.
+/// Extract Bitwarden item UUID from the first few lines and return the stripped content (with header line removed).
+fn extract_and_strip_header(content: &str) -> (Option<String>, String) {
     let re_bw_id = Regex::new(
         r"(?i)\bbw(?:_id)?\s*[:=]\s*([a-f0-9]{8}-[a-f0-9]{4}-[a-f0-9]{4}-[a-f0-9]{4}-[a-f0-9]{12})\b",
     )
     .unwrap();
 
-    if let Some(caps) = re_bw_id.captures(&header_text) {
-        if let Some(m) = caps.get(1) {
-            return Some(m.as_str().to_string());
-        }
-    }
-
-    // Also support matching chezmoi template syntax:
-    // {{ (bitwarden "item" "<uuid>").notes }}
     let re_chezmoi = Regex::new(
         r#"(?i)bitwarden\s+"item"\s+"([a-f0-9]{8}-[a-f0-9]{4}-[a-f0-9]{4}-[a-f0-9]{4}-[a-f0-9]{12})""#,
     )
     .unwrap();
 
-    if let Some(caps) = re_chezmoi.captures(&header_text) {
-        if let Some(m) = caps.get(1) {
-            return Some(m.as_str().to_string());
+    let lines: Vec<&str> = content.lines().collect();
+    let mut item_id = None;
+    let mut header_indices = Vec::new();
+
+    for (idx, line) in lines.iter().take(15).enumerate() {
+        if let Some(caps) = re_bw_id.captures(line) {
+            if let Some(m) = caps.get(1) {
+                if item_id.is_none() {
+                    item_id = Some(m.as_str().to_string());
+                }
+                header_indices.push(idx);
+            }
+        } else if let Some(caps) = re_chezmoi.captures(line) {
+            if let Some(m) = caps.get(1) {
+                if item_id.is_none() {
+                    item_id = Some(m.as_str().to_string());
+                }
+                header_indices.push(idx);
+            }
         }
     }
 
-    None
+    let stripped = if !header_indices.is_empty() {
+        let remaining_lines: Vec<&str> = lines
+            .into_iter()
+            .enumerate()
+            .filter_map(|(i, l)| {
+                if !header_indices.contains(&i) {
+                    Some(l)
+                } else {
+                    None
+                }
+            })
+            .collect();
+        let mut res = remaining_lines.join("\n");
+        if content.ends_with('\n') && !res.is_empty() {
+            res.push('\n');
+        }
+        res
+    } else {
+        content.to_string()
+    };
+
+    (item_id, stripped)
 }
 
 /// Check Bitwarden vault status and unlock interactively if needed, returning an active session key if unlocked.
@@ -245,7 +273,7 @@ fn print_diff(old_text: &str, new_text: &str, file_label: &str) {
     );
     println!(
         "{} {}",
-        "+++ Local File Content:   ".bold().green(),
+        "+++ Content to Sync:       ".bold().green(),
         file_label
     );
 
@@ -265,6 +293,7 @@ fn handle_sync(
     diff_only: bool,
     dry_run: bool,
     no_backup: bool,
+    keep_header: bool,
 ) -> Result<()> {
     if !file.exists() {
         bail!("Target file does not exist: {}", file.display());
@@ -273,10 +302,12 @@ fn handle_sync(
     let local_content = fs::read_to_string(file)
         .with_context(|| format!("Failed to read file: {}", file.display()))?;
 
-    // Determine Bitwarden Item ID
+    // Extract Bitwarden Item ID and stripped content
+    let (extracted_id, stripped_content) = extract_and_strip_header(&local_content);
+
     let item_id = match explicit_id {
         Some(id) => id,
-        None => match extract_item_id(&local_content) {
+        None => match extracted_id {
             Some(id) => id,
             None => {
                 bail!(
@@ -287,6 +318,12 @@ fn handle_sync(
                 );
             }
         },
+    };
+
+    let target_content = if keep_header {
+        &local_content
+    } else {
+        &stripped_content
     };
 
     // Authenticate / check lock
@@ -312,11 +349,11 @@ fn handle_sync(
         .to_string();
 
     // Check if contents are identical
-    if old_notes == local_content {
+    if old_notes == *target_content {
         println!(
             "{}",
             format!(
-                "✓ Local file '{}' and Bitwarden item '{}' notes are already identical. Nothing to sync.",
+                "✓ File '{}' and Bitwarden item '{}' notes are already identical. Nothing to sync.",
                 file.display(),
                 item_name
             )
@@ -328,7 +365,7 @@ fn handle_sync(
     // Display diff if requested or during dry run
     if diff_only || dry_run {
         println!("\n{}", "Differences detected:".bold());
-        print_diff(&old_notes, &local_content, &file.display().to_string());
+        print_diff(&old_notes, target_content, &file.display().to_string());
     }
 
     if diff_only {
@@ -355,8 +392,15 @@ fn handle_sync(
     // Push update to Bitwarden
     print!("🚀 Updating Bitwarden item '{}'...", item_name);
     std::io::stdout().flush().ok();
-    update_item_notes(&item_id, item, &local_content, active_session)?;
+    update_item_notes(&item_id, item, target_content, active_session)?;
     println!(" {}", "Done!".green().bold());
+
+    if !keep_header {
+        println!(
+            "{}",
+            "ℹ️ Stripped bw_id header line before saving to Bitwarden notes.".dimmed()
+        );
+    }
 
     println!(
         "\n{}",
@@ -383,7 +427,8 @@ fn main() -> Result<()> {
             diff,
             dry_run,
             no_backup,
-        } => handle_sync(&file, id, diff, dry_run, no_backup),
+            keep_header,
+        } => handle_sync(&file, id, diff, dry_run, no_backup, keep_header),
     }
 }
 
@@ -392,44 +437,50 @@ mod tests {
     use super::*;
 
     #[test]
-    fn test_extract_item_id_hash_comment() {
-        let content = "# bw_id: e71b158e-c584-4de3-8ae1-b003011c67d4\nHost foo\n  HostName foo.com";
-        assert_eq!(
-            extract_item_id(content),
-            Some("e71b158e-c584-4de3-8ae1-b003011c67d4".to_string())
-        );
+    fn test_extract_and_strip_hash_comment() {
+        let content = "# bw_id: e71b158e-c584-4de3-8ae1-b003011c67d4\nHost foo\n  HostName foo.com\n";
+        let (id, stripped) = extract_and_strip_header(content);
+        assert_eq!(id, Some("e71b158e-c584-4de3-8ae1-b003011c67d4".to_string()));
+        assert_eq!(stripped, "Host foo\n  HostName foo.com\n");
     }
 
     #[test]
-    fn test_extract_item_id_slash_comment() {
-        let content = "// bw_id: 418f2f48-2d8e-495b-bc44-b17500e9aa1b\n{\n  \"key\": \"value\"\n}";
-        assert_eq!(
-            extract_item_id(content),
-            Some("418f2f48-2d8e-495b-bc44-b17500e9aa1b".to_string())
-        );
+    fn test_extract_and_strip_slash_comment() {
+        let content = "// bw_id: 418f2f48-2d8e-495b-bc44-b17500e9aa1b\n{\n  \"key\": \"value\"\n}\n";
+        let (id, stripped) = extract_and_strip_header(content);
+        assert_eq!(id, Some("418f2f48-2d8e-495b-bc44-b17500e9aa1b".to_string()));
+        assert_eq!(stripped, "{\n  \"key\": \"value\"\n}\n");
     }
 
     #[test]
-    fn test_extract_item_id_dash_comment() {
-        let content = "-- bw_id: 7540fa95-a318-49a3-b140-b17500e9b87e\nreturn { theme = 'tokyonight' }";
-        assert_eq!(
-            extract_item_id(content),
-            Some("7540fa95-a318-49a3-b140-b17500e9b87e".to_string())
-        );
+    fn test_extract_and_strip_dash_comment() {
+        let content = "-- bw_id: 7540fa95-a318-49a3-b140-b17500e9b87e\nreturn { theme = 'tokyonight' }\n";
+        let (id, stripped) = extract_and_strip_header(content);
+        assert_eq!(id, Some("7540fa95-a318-49a3-b140-b17500e9b87e".to_string()));
+        assert_eq!(stripped, "return { theme = 'tokyonight' }\n");
     }
 
     #[test]
-    fn test_extract_item_id_chezmoi_template() {
-        let content = "{{ if lookPath \"bw\" }}\n{{ (bitwarden \"item\" \"e71b158e-c584-4de3-8ae1-b003011c67d4\").notes }}\n{{ end }}";
-        assert_eq!(
-            extract_item_id(content),
-            Some("e71b158e-c584-4de3-8ae1-b003011c67d4".to_string())
-        );
+    fn test_extract_and_strip_chezmoi_template() {
+        let content = "{{ if lookPath \"bw\" }}\n{{ (bitwarden \"item\" \"e71b158e-c584-4de3-8ae1-b003011c67d4\").notes }}\n{{ end }}\n";
+        let (id, stripped) = extract_and_strip_header(content);
+        assert_eq!(id, Some("e71b158e-c584-4de3-8ae1-b003011c67d4".to_string()));
+        assert_eq!(stripped, "{{ if lookPath \"bw\" }}\n{{ end }}\n");
     }
 
     #[test]
-    fn test_extract_item_id_none() {
-        let content = "Host foo\n  HostName foo.com\n  User test";
-        assert_eq!(extract_item_id(content), None);
+    fn test_extract_and_strip_duplicated_headers() {
+        let content = "# bw_id: e71b158e-c584-4de3-8ae1-b003011c67d4\n# bw_id: e71b158e-c584-4de3-8ae1-b003011c67d4\nHost foo\n";
+        let (id, stripped) = extract_and_strip_header(content);
+        assert_eq!(id, Some("e71b158e-c584-4de3-8ae1-b003011c67d4".to_string()));
+        assert_eq!(stripped, "Host foo\n");
+    }
+
+    #[test]
+    fn test_extract_and_strip_none() {
+        let content = "Host foo\n  HostName foo.com\n  User test\n";
+        let (id, stripped) = extract_and_strip_header(content);
+        assert_eq!(id, None);
+        assert_eq!(stripped, content);
     }
 }
