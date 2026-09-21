@@ -79,7 +79,11 @@ bw_edit sync ~/.ssh/config.d/3_hostLN.conf --dry-run
 ## インストール
 
 ### リリースバイナリのダウンロード
-[GitHub Releases](https://github.com/motty-mio2/bw_edit/releases) より、ご利用の OS / アーキテクチャに合わせたバイナリ（Linux x86_64, Linux aarch64, macOS, Windows）をダウンロードしてパスの通ったディレクトリに配置してください。
+[GitHub Releases](https://github.com/motty-mio2/bw_edit/releases) より、ご利用の OS / アーキテクチャに合わせたバイナリをダウンロードしてパスの通ったディレクトリに配置してください。
+- **Linux x86_64**: `x86_64-unknown-linux-musl`（完全静的リンクバイナリ）
+- **Linux ARM64**: `aarch64-unknown-linux-musl`（完全静的リンクバイナリ）
+- **macOS Apple Silicon**: `aarch64-apple-darwin`
+- **Windows x64**: `x86_64-pc-windows-msvc`
 
 ### Cargo からのビルド / インストール
 ```bash
