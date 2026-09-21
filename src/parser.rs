@@ -17,20 +17,19 @@ pub fn extract_and_strip_header(content: &str) -> (Option<String>, String) {
     let mut header_indices = Vec::new();
 
     for (idx, line) in lines.iter().take(15).enumerate() {
-        if let Some(caps) = re_bw_id.captures(line) {
-            if let Some(m) = caps.get(1) {
-                if item_id.is_none() {
-                    item_id = Some(m.as_str().to_string());
-                }
-                header_indices.push(idx);
-            }
+        let captured = if let Some(caps) = re_bw_id.captures(line) {
+            caps.get(1).map(|m| m.as_str().to_string())
         } else if let Some(caps) = re_chezmoi.captures(line) {
-            if let Some(m) = caps.get(1) {
-                if item_id.is_none() {
-                    item_id = Some(m.as_str().to_string());
-                }
-                header_indices.push(idx);
+            caps.get(1).map(|m| m.as_str().to_string())
+        } else {
+            None
+        };
+
+        if let Some(uuid) = captured {
+            if item_id.is_none() {
+                item_id = Some(uuid);
             }
+            header_indices.push(idx);
         }
     }
 
@@ -64,7 +63,8 @@ mod tests {
 
     #[test]
     fn test_extract_and_strip_hash_comment() {
-        let content = "# bw_id: e71b158e-c584-4de3-8ae1-b003011c67d4\nHost foo\n  HostName foo.com\n";
+        let content =
+            "# bw_id: e71b158e-c584-4de3-8ae1-b003011c67d4\nHost foo\n  HostName foo.com\n";
         let (id, stripped) = extract_and_strip_header(content);
         assert_eq!(id, Some("e71b158e-c584-4de3-8ae1-b003011c67d4".to_string()));
         assert_eq!(stripped, "Host foo\n  HostName foo.com\n");
@@ -72,7 +72,8 @@ mod tests {
 
     #[test]
     fn test_extract_and_strip_slash_comment() {
-        let content = "// bw_id: 418f2f48-2d8e-495b-bc44-b17500e9aa1b\n{\n  \"key\": \"value\"\n}\n";
+        let content =
+            "// bw_id: 418f2f48-2d8e-495b-bc44-b17500e9aa1b\n{\n  \"key\": \"value\"\n}\n";
         let (id, stripped) = extract_and_strip_header(content);
         assert_eq!(id, Some("418f2f48-2d8e-495b-bc44-b17500e9aa1b".to_string()));
         assert_eq!(stripped, "{\n  \"key\": \"value\"\n}\n");
@@ -80,7 +81,8 @@ mod tests {
 
     #[test]
     fn test_extract_and_strip_dash_comment() {
-        let content = "-- bw_id: 7540fa95-a318-49a3-b140-b17500e9b87e\nreturn { theme = 'tokyonight' }\n";
+        let content =
+            "-- bw_id: 7540fa95-a318-49a3-b140-b17500e9b87e\nreturn { theme = 'tokyonight' }\n";
         let (id, stripped) = extract_and_strip_header(content);
         assert_eq!(id, Some("7540fa95-a318-49a3-b140-b17500e9b87e".to_string()));
         assert_eq!(stripped, "return { theme = 'tokyonight' }\n");

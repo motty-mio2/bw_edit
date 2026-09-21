@@ -1,4 +1,4 @@
-use anyhow::{bail, Context, Result};
+use anyhow::{Context, Result, bail};
 use base64::prelude::*;
 use colored::*;
 use serde::{Deserialize, Serialize};
@@ -105,7 +105,8 @@ pub fn update_item_notes(
     session: Option<&str>,
 ) -> Result<()> {
     item["notes"] = Value::String(new_notes.to_string());
-    let json_str = serde_json::to_string(&item).context("Failed to serialize modified item JSON")?;
+    let json_str =
+        serde_json::to_string(&item).context("Failed to serialize modified item JSON")?;
     let encoded = BASE64_STANDARD.encode(json_str.as_bytes());
 
     let mut cmd = Command::new("bw");

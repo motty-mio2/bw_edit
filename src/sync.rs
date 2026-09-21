@@ -1,4 +1,4 @@
-use anyhow::{bail, Context, Result};
+use anyhow::{Context, Result, bail};
 use colored::*;
 use std::fs;
 use std::io::Write;
@@ -53,10 +53,7 @@ pub fn handle_sync(
     let session = ensure_unlocked(env_session.as_deref())?;
     let active_session = session.as_deref().or(env_session.as_deref());
 
-    println!(
-        "🔍 Fetching Bitwarden item {}...",
-        item_id.cyan().bold()
-    );
+    println!("🔍 Fetching Bitwarden item {}...", item_id.cyan().bold());
     let item = get_item(&item_id, active_session)?;
     let item_name = item
         .get("name")
@@ -97,7 +94,9 @@ pub fn handle_sync(
     if dry_run {
         println!(
             "\n{}",
-            "⚡ [Dry Run] Changes not applied to Bitwarden.".yellow().bold()
+            "⚡ [Dry Run] Changes not applied to Bitwarden."
+                .yellow()
+                .bold()
         );
         return Ok(());
     }

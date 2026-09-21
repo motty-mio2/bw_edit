@@ -1,5 +1,8 @@
 # bw_edit
 
+[![CI](https://github.com/motty-mio2/bw_edit/actions/workflows/ci.yml/badge.svg)](https://github.com/motty-mio2/bw_edit/actions/workflows/ci.yml)
+[![Release](https://img.shields.io/github/v/release/motty-mio2/bw_edit)](https://github.com/motty-mio2/bw_edit/releases)
+
 `bw_edit` は、chezmoi 等で展開されたローカルの設定ファイルを直接編集した後に、ワンコマンドで Bitwarden 上のアイテムメモ（`notes`）に逆同期（Push）するための CLI ツールです。
 
 ## 特徴
@@ -73,9 +76,16 @@ bw_edit sync ~/.ssh/config.d/3_hostLN.conf --dry-run
 
 ---
 
-## インストール / 更新
+## インストール
 
+### リリースバイナリのダウンロード
+[GitHub Releases](https://github.com/motty-mio2/bw_edit/releases) より、ご利用の OS / アーキテクチャに合わせたバイナリ（Linux x86_64, Linux aarch64, macOS, Windows）をダウンロードしてパスの通ったディレクトリに配置してください。
+
+### Cargo からのビルド / インストール
+```bash
+cargo install --git https://github.com/motty-mio2/bw_edit.git
+```
+またはリポジトリを手元でクローンして:
 ```bash
 cargo install --path .
 ```
-バイナリは `~/.cargo/bin/bw_edit`（または `~/.local/share/cargo/bin/bw_edit`）に配置されます。
